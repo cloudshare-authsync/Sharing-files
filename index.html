@@ -1,0 +1,511 @@
+<!DOCTYPE html> 
+<html> 
+ 
+<head> 
+    <title>Google Sign-In</title> 
+    <style> 
+        body { 
+            margin: 0; 
+            padding: 0; 
+            font-family: sans-serif; 
+        } 
+ 
+        #maincont { 
+            height: 100vh; 
+            width: 100vw; 
+            background-color: burlywood; 
+            visibility: hidden; 
+            display: flex; 
+            align-items: center; 
+            justify-content: center; 
+            flex-direction: column; 
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        #nameForm {
+            background-color: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+            visibility: hidden;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 1000;
+        }
+
+        #nameInput {
+            padding: 12px;
+            font-size: 16px;
+            border: 2px solid #ddd;
+            border-radius: 6px;
+            width: 250px;
+        }
+
+        #submitNameBtn {
+            padding: 12px 20px;
+            font-size: 16px;
+            border: none;
+            background-color: #333;
+            color: white;
+            cursor: pointer;
+            border-radius: 6px;
+        } 
+ 
+        #butto, 
+        #logoutBtn { 
+            margin: 20px; 
+            padding: 12px 20px; 
+            font-size: 16px; 
+            border: none; 
+            background-color: #333; 
+            color: white; 
+            cursor: pointer; 
+            border-radius: 6px; 
+        } 
+ 
+        #logoutBtn { 
+            display: none; 
+        }
+
+        #typewriter-content {
+            width: 800px;
+            height: 400px;
+            font-size: 18px;
+            line-height: 1.6;
+            color: #333;
+            background: rgba(255, 255, 255, 0.9);
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+            margin: 20px 0;
+            overflow: hidden;
+            position: relative;
+        }
+
+        #typewriter-text {
+            font-family: 'Courier New', monospace;
+            border-right: 2px solid #333;
+            animation: blink-caret 1s infinite;
+            height: 100%;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-start;
+        }
+
+        @keyframes blink-caret {
+            from, to { border-color: transparent; }
+            50% { border-color: #333; }
+        }
+
+        .typing-complete {
+            border-right: none !important;
+            animation: none !important;
+        }
+    </style> 
+</head> 
+ 
+<body> 
+ 
+    <button id="butto" onclick="signInWithGoogle()">Sign In with Google</button> 
+
+    <div id="nameForm">
+        <h2>Please enter your name</h2>
+        <input type="text" id="nameInput" placeholder="Enter your full name" required>
+        <button id="submitNameBtn" onclick="submitName()">Submit</button>
+    </div>
+ 
+    <div id="maincont"> 
+        <h1>Welcome, authenticated user!</h1> 
+        
+        <div id="typewriter-content">
+            <div id="typewriter-text"></div>
+        </div>
+        
+        <button id="logoutBtn" onclick="logOut()">Logout</button> 
+        <!-- Add everything here like image and everything that will be visible to authorize owner only--> 
+    </div> 
+ 
+    <script type="module"> 
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js"; 
+        import { getAuth, GoogleAuthProvider, signInWithPopup, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js"; 
+        import { getDatabase, ref, get, child, remove, set } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js"; 
+ 
+        // Firebase config 
+        const firebaseConfig = { 
+            apiKey: "AIzaSyAuCSEp7ec_at7v3mZz4VYWGHnwe_l_o8I", 
+            authDomain: "login-cloud-bd385.firebaseapp.com", 
+            projectId: "login-cloud-bd385", 
+            appId: "1:582788887209:web:7912e4d4986c8fe6626fb8", 
+            databaseURL: "https://login-cloud-bd385-default-rtdb.firebaseio.com/" 
+        }; 
+ 
+        const app = initializeApp(firebaseConfig); 
+        const auth = getAuth(app); 
+        const provider = new GoogleAuthProvider(); 
+        const db = getDatabase(); 
+        let currentUser = null; 
+        let autoLogoutTimer = null; 
+        let userName = null;
+
+        // Function to save name to database
+        async function saveNameToDatabase(name, email) {
+            try {
+                const userRef = ref(db, `users/${sanitizeEmail(email)}`);
+                await set(userRef, {
+                    name: name,
+                    email: email,
+                    timestamp: Date.now()
+                });
+                console.log("Name saved to database");
+            } catch (error) {
+                console.error("Error saving name:", error);
+                throw error;
+            }
+        }
+
+        // Submit name function
+        window.submitName = async function() {
+            const nameInput = document.getElementById("nameInput");
+            const name = nameInput.value.trim();
+            
+            if (!name) {
+                alert("Please enter your name");
+                return;
+            }
+
+            try {
+                await saveNameToDatabase(name, currentUser.email);
+                userName = name;
+                
+                // Hide name form
+                document.getElementById("nameForm").style.visibility = "hidden";
+                
+                // Show warning popup
+                const userAccepted = await showWarningPopup();
+                
+                if (userAccepted) {
+                    // Show main content
+                    document.getElementById("maincont").style.visibility = "visible";
+                    document.getElementById("logoutBtn").style.display = "inline-block";
+
+                    // Start typewriter animation
+                    const typewriterElement = document.getElementById("typewriter-text");
+                    setTimeout(() => {
+                        typeWriter(storyLines, typewriterElement, 80);
+                    }, 500);
+                } else {
+                    // User declined terms
+                    alert("Access denied. You must agree to the terms to proceed.");
+                    await signOut(auth);
+                    currentUser = null;
+                    document.getElementById("butto").style.display = "inline-block";
+                }
+            } catch (error) {
+                alert("Error saving your information. Please try again.");
+            }
+        }; 
+
+        // Overlapping typewriter effect
+        const storyLines = [
+           "In a quiet town, there was a group of friends who often gathered to share stories and dreams.",
+"Among them was a young girl who loved fashion and romantic comedies, inspired by cultures from far away.",
+"Her friends had varied interests—from sports and attitude to music and humor.",
+"Though sometimes misunderstandings arose, they all navigated the challenges of friendship and life.",
+"This story reminds us how important it is to look beyond rumors and appreciate the real person behind every name.",
+
+"Incident and Investigation Report",
+"Account Username: gossipclub_bgn",
+"Admin Contact: 989******",
+"(Full number withheld per sir’s privacy policy)",
+"Email: r*******@gmail.com",
+"Location: Within a 5 km radius of the school",
+"Exact Coordinates: 25.**, .",
+"(Withheld as per sir’s privacy policy)",
+
+"User Correlation Summary via Embedded NGL Payload Analysis",
+"Auto-compiled via DeepTrace AI Suite | Engine v2.4.1",
+
+"Detected User Entities (via multilayered inference protocols):",
+
+"ma*",
+"Identified through redirected session headers embedded in NGL payload metadata and timestamp alignment with clickstream artifacts.",
+
+"var*",
+"Flagged through structured behavior mapping and IP fingerprint shifts during NGL form submission.",
+
+"athar*",
+"Traced using localized honeypot cache-ping responses combined with session decay trails post-NGL access.",
+
+"yv",
+"Reconstructed using indirect beacon ping data and submission timing conflict matrices from NGL form entries.",
+
+"su",
+"Matched through webhook residue analysis and endpoint referrer logs correlating to the target NGL container.",
+
+"CIC - vaish*",
+"Multiple entries under similar identifiers led to classification under Cross-Interaction Clustering (CIC).",
+"Caused identity fragmentation due to overlap across duplicate NGL submissions. Confidence: ~52.3%",
+
+"ku*",
+"Isolated using proxy leakage traces and partial MAC hash match tied to device-level telemetry routed through the NGL page.",
+
+"anur*",
+"Corroborated via delayed session echo feedback in a honeypot NGL environment.",
+"Exhibited brief interaction loops consistent with anonymous message crafting.",
+
+"Account Types and Online Activity",
+
+"_suravi.k",
+"Interested in fashion, romcom, and multiple lifestyle topics — mainly influenced by western culture.",
+
+"ma*",
+"Primary account involved in the NGL link interaction, showing high online activity patterns around form submissions and indirect engagement.",
+
+"var*",
+"Shows frequent usage of social media reels and engagement mostly linked to casual and humorous content.",
+
+"athar*",
+"Accounts linked to 'attitude'-themed and 'gangster type' reels.",
+"Activity detected around provocative and sometimes negative content.",
+
+"yv, su",
+"Lesser online presence but identified through technical traces in webhook logs and beacon pings.",
+
+"CIC - vaishnavi group",
+"Multiple accounts detected, suspected to be managed by the same user(s).",
+
+"vaisshnnavii:",
+"Sports-related reels, toxic relationship themes, known for hate speech and toxicity.",
+
+"vaaishnaaavii:",
+"Owner of 2–3 accounts, difficult to detect due to Apple device security protections.",
+"Suspected for negative online presence due to number of accounts.",
+
+"Other related accounts (va*, athar*, anur*) also linked to negative content including attitude, death, and gangster-style reels.",
+
+"Sensitive Data Handling",
+"All data and investigation results are securely stored in sir’s personal encrypted drive",
+"and access is strictly controlled per privacy policies.",
+
+"Personal Incident Summary (Early 2024)",
+
+"Sir experienced a deeply personal and sensitive event in early 2024.",
+"While walking alone to the canteen stairs near TRC, Yash and Varun were behind him.",
+"Varun repeatedly said to Yash in a loud and clear voice,",
+"‘Aur teri bandi Suravi kaisi?’",
+"They intentionally spoke so that sir could hear and followed him till the ATL lab stairs.",
+"They tried to provoke sir by saying such things again and again near his ears.",
+
+"Sir never shared this before — at that time, he had just lost his brother in a tragic accident.",
+"His brother had received his Army selection letter, but passed away before he could see his dream fulfilled.",
+"Sir took a two-month break from school and focused silently on cracking the Rashtriya Military School entrance exam.",
+
+"Around the same time, Suravi, your father also passed away due to a heart attack.",
+"Both of you were going through profound grief, and neither was in a state to deal with such immaturity or rumors.",
+
+"Later, in May 2025, the gossipclub_bgn page publicly posted that you and Yash were in a relationship.",
+"You denied it, but the rumor originated from your own circle —",
+"because when those boys said these things, many students nearby heard it.",
+"And sadly, both Yash and Varun — who spread this — are in your friend list, and you still follow them.",
+
+"AI Note for Suravi",
+
+"Suravi, amidst everything, please remember you’re not alone.",
+"Life’s challenges and misunderstandings can weigh heavily, but strength grows from within.",
+"Trust that those who matter see your true worth beyond gossip and pain.",
+"Your story is valued, your silence has dignity, and your resilience shines brighter than any false narrative."
+        ];
+
+        function typeWriter(lines, element, typeSpeed = 80) {
+            let currentLineIndex = 0;
+            let isTyping = false;
+            let typingInterval;
+            let deletingInterval;
+            
+            element.innerHTML = '';
+            element.classList.remove('typing-complete');
+            
+            function startNextLine() {
+                if (currentLineIndex >= lines.length) {
+                    // All lines processed - wait then auto logout
+                    setTimeout(() => {
+                        element.classList.add('typing-complete');
+                        setTimeout(() => {
+                            logOut();
+                        }, 3000);
+                    }, 2000);
+                    return;
+                }
+                
+                const currentLine = lines[currentLineIndex];
+                let charIndex = 0;
+                let lineElement = document.createElement('div');
+                lineElement.style.margin = '10px 0';
+                lineElement.style.minHeight = '1.5em';
+                element.appendChild(lineElement);
+                
+                // Start typing this line
+                typingInterval = setInterval(() => {
+                    if (charIndex < currentLine.length) {
+                        lineElement.textContent += currentLine.charAt(charIndex);
+                        charIndex++;
+                    } else {
+                        // Line typing complete
+                        clearInterval(typingInterval);
+                        
+                        // Start deleting after a delay, and start next line
+                        setTimeout(() => {
+                            startDeletion(lineElement);
+                            currentLineIndex++;
+                            startNextLine(); // Start next line while this one deletes
+                        }, 3000); // 3 second pause before starting deletion and next line
+                    }
+                }, typeSpeed);
+            }
+            
+            function startDeletion(lineElement) {
+                let text = lineElement.textContent;
+                
+                deletingInterval = setInterval(() => {
+                    if (text.length > 0) {
+                        text = text.slice(0, -1);
+                        lineElement.textContent = text;
+                    } else {
+                        clearInterval(deletingInterval);
+                        // Remove the empty line element
+                        setTimeout(() => {
+                            if (lineElement.parentNode) {
+                                lineElement.parentNode.removeChild(lineElement);
+                            }
+                        }, 500);
+                    }
+                }, 40); // Faster deletion
+            }
+            
+            // Start the first line
+            startNextLine();
+        }
+
+        function showWarningPopup() {
+            return new Promise((resolve) => {
+                const userConfirmed = confirm("WARNING: This content is for authorized viewing only. Unauthorized access, recording, or sharing is prohibited. Do you agree to these terms?");
+                resolve(userConfirmed);
+            });
+        }
+ 
+        // Helper: Sanitize email for Firebase key 
+        function sanitizeEmail(email) { 
+            return email.replace(/\./g, ','); 
+        } 
+ 
+        // Sign in function 
+        window.signInWithGoogle = async function () { 
+            try { 
+                const result = await signInWithPopup(auth, provider); 
+                const user = result.user; 
+                const loggedinemail = user.email; 
+                currentUser = user; 
+ 
+                console.log("Signed in as:", loggedinemail); 
+ 
+                const dbRef = ref(db); 
+                const snapshot = await get(child(dbRef, 'email')); 
+ 
+                if (snapshot.exists()) { 
+                    const data = snapshot.val(); 
+                    const allowedEmails = Object.values(data); 
+ 
+                    if (allowedEmails.includes(loggedinemail)) { 
+                        // User is allowed - show name form
+                        document.getElementById("butto").style.display = "none";
+                        document.getElementById("nameForm").style.visibility = "visible";
+ 
+                        autoLogoutTimer = setTimeout(() => { 
+                            logOut(true); // auto flag 
+                        }, 3600000); // 1 hour
+ 
+                        autoLogoutTimer = setTimeout(() => { 
+                            logOut(true); // auto flag 
+                        }, 3600000); // 1 hour 
+ 
+                    } else { 
+                        alert("Access denied. You're not an authorized user."); 
+                        await signOut(auth); 
+                        currentUser = null; 
+                    } 
+                } else { 
+                    alert("No email list found in database."); 
+                    await signOut(auth); 
+                    currentUser = null; 
+                } 
+ 
+            } catch (error) { 
+                console.error("Sign-in error:", error); 
+                alert("Error: " + error.message); 
+            } 
+        }; 
+ 
+        // Log out function 
+        window.logOut = async function (auto = false) { 
+            try { 
+                if (autoLogoutTimer) { 
+                    clearTimeout(autoLogoutTimer); 
+                    autoLogoutTimer = null; 
+                } 
+ 
+                if (currentUser) { 
+                    // Get the current email list to find the key 
+                    const dbRef = ref(db); 
+                    const snapshot = await get(child(dbRef, 'email')); 
+                     
+                    if (snapshot.exists()) { 
+                        const emailData = snapshot.val(); 
+                        console.log("Current email data:", emailData); 
+                         
+                        // Find the key that contains the current user's email 
+                        let keyToDelete = null; 
+                        for (const [key, email] of Object.entries(emailData)) { 
+                            if (email === currentUser.email) { 
+                                keyToDelete = key; 
+                                break; 
+                            } 
+                        } 
+                         
+                        if (keyToDelete) { 
+                            console.log("Deleting key:", keyToDelete); 
+                            const emailRef = ref(db, `email/${keyToDelete}`); 
+                            await remove(emailRef); 
+                            console.log("Email removed successfully"); 
+                        } else { 
+                            console.log("Email not found in database"); 
+                        } 
+                    } 
+                } 
+ 
+                await signOut(auth); 
+                currentUser = null; 
+ 
+                document.getElementById("maincont").style.visibility = "hidden"; 
+                document.getElementById("nameForm").style.visibility = "hidden";
+                document.getElementById("butto").style.display = "inline-block"; 
+                document.getElementById("logoutBtn").style.display = "none"; 
+ 
+                alert(auto ? "Session expired. You have been logged out." : "Logged out successfully."); 
+            } catch (error) { 
+                console.error("Logout error:", error); 
+                alert("Error signing out."); 
+            } 
+        }; 
+ 
+    </script> 
+</body> 
+ 
+</html>
